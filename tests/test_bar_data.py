@@ -23,6 +23,8 @@ import pandas as pd
 
 from zipline._protocol import handle_non_market_minutes
 from zipline.protocol import BarData
+from zipline.rl_manager import RestrictionsController, InMemoryRLManager, \
+    Restriction
 from zipline.testing import (
     MockDailyBarReader,
     create_daily_df_for_asset,
@@ -46,6 +48,8 @@ field_info = {
     "low": -1,
     "close": 0
 }
+
+str_to_ts = lambda dt_str: pd.Timestamp(dt_str, tz='UTC')
 
 
 class WithBarDataChecks(object):
@@ -192,6 +196,10 @@ class TestMinuteBarData(WithBarDataChecks,
         )
 
         cls.ASSETS = [cls.ASSET1, cls.ASSET2]
+
+    def init_instance_fixtures(self):
+        super(TestMinuteBarData, self).init_instance_fixtures()
+        self.restrictions_controller = RestrictionsController()
 
     def test_minute_before_assets_trading(self):
         # grab minutes that include the day before the asset start
@@ -670,6 +678,30 @@ class TestMinuteBarData(WithBarDataChecks,
 
                 # Assert the price is adjusted for the overnight split
                 self.assertEqual(value, expected[field])
+
+    def test_can_trade_restricted(self):
+
+        minutes_to_check = [
+            (pd.Timestamp("2016-01-05 9:31", tz="US/Eastern"), False),
+            (pd.Timestamp("2016-01-06 9:31", tz="US/Eastern"), False),
+            (pd.Timestamp("2016-01-07 9:31", tz="US/Eastern"), True),
+        ]
+
+        rlm = InMemoryRLManager([
+            Restriction(1, str_to_ts('2016-01-05'), str_to_ts('2016-01-06'),
+                        'freeze'),
+            Restriction(1, str_to_ts('2016-01-06'), str_to_ts('2016-01-07'),
+                        'liquidate'),
+        ])
+        self.restrictions_controller.add_restrictions(rlm)
+
+        for info in minutes_to_check:
+            bar_data = BarData(self.data_portal,
+                               lambda: info[0],
+                               "minute",
+                               self.trading_calendar,
+                               self.restrictions_controller)
+            self.assertEqual(bar_data.can_trade(self.ASSET1), info[1])
 
 
 class TestDailyBarData(WithBarDataChecks,

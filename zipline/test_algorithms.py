@@ -505,9 +505,9 @@ class SetMaxOrderSizeAlgorithm(TradingAlgorithm):
 
 
 class SetDoNotOrderListAlgorithm(TradingAlgorithm):
-    def initialize(self, sid=None, restricted_list=None):
+    def initialize(self, sid=None, restricted_list=None, fail_on_violation=True):
         self.order_count = 0
-        self.set_do_not_order_list(restricted_list)
+        self.set_do_not_order_list(restricted_list, fail_on_violation)
 
 
 class SetMaxOrderCountAlgorithm(TradingAlgorithm):

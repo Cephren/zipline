@@ -77,6 +77,7 @@ from zipline.finance.commission import PerShare
 from zipline.finance.execution import LimitOrder
 from zipline.finance.order import ORDER_STATUS
 from zipline.finance.trading import SimulationParameters
+from zipline.rl_manager import InMemoryRLManager, Restriction
 from zipline.testing import (
     FakeDataPortal,
     create_daily_df_for_asset,
@@ -2892,33 +2893,75 @@ class TestTradingControls(WithSimParams, WithDataPortal, ZiplineTestCase):
         self.check_algo_fails(algo, handle_data, 0)
 
     def test_set_do_not_order_list(self):
-        # set the restricted list to be the sid, and fail.
-        algo = SetDoNotOrderListAlgorithm(
-            sid=self.sid,
-            restricted_list=[self.sid],
-            sim_params=self.sim_params,
-            env=self.env,
-        )
 
         def handle_data(algo, data):
+            algo.could_trade = data.can_trade(algo.sid(self.sid))
             algo.order(algo.sid(self.sid), 100)
             algo.order_count += 1
 
+        # set the restricted list to be one sid for the entire simulation,
+        # and fail.
+        rlm = InMemoryRLManager([
+            Restriction(
+                self.sid,
+                self.sim_params.start_session,
+                self.trading_calendar.next_session_label(
+                    self.sim_params.end_session),
+                'freeze')
+        ])
+        algo = SetDoNotOrderListAlgorithm(
+            sid=self.sid,
+            restricted_list=rlm,
+            sim_params=self.sim_params,
+            env=self.env,
+        )
         self.check_algo_fails(algo, handle_data, 0)
+        self.assertFalse(algo.could_trade)
+
+        # if the restricted list is a static list, then use a shim.
+        rlm = [self.sid]
+        algo = SetDoNotOrderListAlgorithm(
+            sid=self.sid,
+            restricted_list=rlm,
+            sim_params=self.sim_params,
+            env=self.env,
+        )
+        self.check_algo_fails(algo, handle_data, 0)
+        self.assertFalse(algo.could_trade)
+
+        # just log an error on the violation if we choose not to fail.
+        algo = SetDoNotOrderListAlgorithm(
+            sid=self.sid,
+            restricted_list=rlm,
+            sim_params=self.sim_params,
+            env=self.env,
+            fail_on_violation=False
+        )
+        with make_test_handler(self) as log_catcher:
+            self.check_algo_succeeds(algo, handle_data)
+        logs = [r.message for r in log_catcher.records]
+        self.assertIn("Order for 100 shares of Equity(133 [A]) at "
+                      "2006-01-03 21:00:00+00:00 violates trading constraint "
+                      "RestrictedListOrder({})", logs)
+        self.assertFalse(algo.could_trade)
 
         # set the restricted list to exclude the sid, and succeed
+        rlm = InMemoryRLManager([
+            Restriction(
+                sid,
+                self.sim_params.start_session,
+                self.trading_calendar.next_session_label(
+                    self.sim_params.end_session),
+                'freeze') for sid in [134, 135, 136]
+        ])
         algo = SetDoNotOrderListAlgorithm(
             sid=self.sid,
-            restricted_list=[134, 135, 136],
+            restricted_list=rlm,
             sim_params=self.sim_params,
             env=self.env,
         )
-
-        def handle_data(algo, data):
-            algo.order(algo.sid(self.sid), 100)
-            algo.order_count += 1
-
         self.check_algo_succeeds(algo, handle_data)
+        self.assertTrue(algo.could_trade)
 
     def test_set_max_order_size(self):
 

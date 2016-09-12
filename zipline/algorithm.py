@@ -35,6 +35,7 @@ from six import (
 )
 
 from zipline._protocol import handle_non_market_minutes
+from zipline.rl_manager import RestrictionsController, StaticRestrictedList
 from zipline.assets.synthetic import make_simple_equity_info
 from zipline.data.data_portal import DataPortal
 from zipline.data.us_equity_pricing import PanelBarReader
@@ -419,6 +420,8 @@ class TradingAlgorithm(object):
         # A dictionary of the actual capital change deltas, keyed by timestamp
         self.capital_change_deltas = {}
 
+        self.rl_controller = RestrictionsController()
+
     def init_engine(self, get_loader):
         """
         Construct and store a PipelineEngine from loader.
@@ -565,6 +568,7 @@ class TradingAlgorithm(object):
             self.data_portal,
             self._create_clock(),
             self._create_benchmark_source(),
+            self.rl_controller,
             universe_func=self._calculate_universe
         )
 
@@ -2220,7 +2224,7 @@ class TradingAlgorithm(object):
         self.register_trading_control(control)
 
     @api_method
-    def set_do_not_order_list(self, restricted_list):
+    def set_do_not_order_list(self, restricted_list, fail_on_violation=True):
         """Set a restriction on which assets can be ordered.
 
         Parameters
@@ -2228,8 +2232,13 @@ class TradingAlgorithm(object):
         restricted_list : container[Asset]
             The assets that cannot be ordered.
         """
-        control = RestrictedListOrder(restricted_list)
+
+        if isinstance(restricted_list, (list, tuple, set)):
+            restricted_list = StaticRestrictedList(restricted_list)
+
+        control = RestrictedListOrder(restricted_list, fail_on_violation)
         self.register_trading_control(control)
+        self.rl_controller.add_restrictions(restricted_list)
 
     @api_method
     def set_long_only(self):
